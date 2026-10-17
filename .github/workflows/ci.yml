@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12"]
+        mcp: ["mcp>=1.2,<2", "mcp>=2,<3"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install "${{ matrix.mcp }}" -e ".[dev]"
+      - run: pytest -q
+      - name: Server loads and lists its tools
+        run: python -c "import asyncio; from comfy_workflow_mcp import server; print([t.name for t in asyncio.run(server.mcp.list_tools())])"

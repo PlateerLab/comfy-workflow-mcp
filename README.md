@@ -6,6 +6,8 @@ Build and tune a workflow in the ComfyUI editor and save it. Agents can then lis
 
 Works with a local or remote ComfyUI, and with a [vast.ai](https://vast.ai) instance found from your API key.
 
+> **Source-available, not open source.** The code is public to read and evaluate. Using, copying, modifying or redistributing it needs written permission from the owner ([jinsoo96](https://github.com/jinsoo96)); PlateerLab members have it within Plateer products. See [LICENSE](LICENSE).
+
 ## Tools
 
 | Tool | What it does |
@@ -35,7 +37,7 @@ A title wins over a class name, so give the nodes you want agents to touch a cle
 ## Install
 
 ```bash
-pip install git+https://github.com/<owner>/comfy-workflow-mcp   # until it is on PyPI
+pip install git+https://github.com/PlateerLab/comfy-workflow-mcp
 # or from a checkout
 pip install -e .
 ```
@@ -93,4 +95,4 @@ The tests cover the conversion offline with a hand-made `/object_info`.
 
 ## License
 
-To be decided before the first release.
+Source-available, all rights reserved: [LICENSE](LICENSE). Reading, evaluating and citing are allowed; any other use needs written permission from the owner (jinsoo96, wlstn010203@gmail.com, or an issue on this repository). [PlateerLab/comfy-workflow-mcp](https://github.com/PlateerLab/comfy-workflow-mcp) is the origin; [jinsoo96/js-comfy-workflow-mcp](https://github.com/jinsoo96/js-comfy-workflow-mcp) mirrors it automatically.

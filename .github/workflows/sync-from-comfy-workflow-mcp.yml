@@ -1,0 +1,41 @@
+name: Sync from comfy-workflow-mcp
+
+# jinsoo96/js-comfy-workflow-mcp is a mirror of PlateerLab/comfy-workflow-mcp. The origin pushes
+# every change to the mirror as it happens (mirror.yml); this job runs only on the mirror, once a
+# day, and fast-forwards it from the origin in case a push was missed.
+#
+# The push uses the SYNC_TOKEN secret (a personal access token with the `repo` and `workflow`
+# scopes) when the mirror has one, and the repository's own GITHUB_TOKEN otherwise. GITHUB_TOKEN
+# can never push a commit that touches .github/workflows/*, so without SYNC_TOKEN the mirror would
+# stop at the first commit that changes CI.
+
+on:
+  schedule:
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-from-comfy-workflow-mcp
+  cancel-in-progress: false
+
+jobs:
+  fast-forward-mirror:
+    if: github.repository == 'jinsoo96/js-comfy-workflow-mcp'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the mirror
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Fast-forward from the organization origin
+        run: |
+          git remote add origin-org https://github.com/PlateerLab/comfy-workflow-mcp.git
+          git fetch --no-tags origin-org main
+          git checkout main
+          git merge --ff-only origin-org/main
+          git push origin main
