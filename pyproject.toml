@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "comfy-workflow-mcp"
+version = "0.1.0"
+description = "MCP server that runs the workflows saved in a ComfyUI server (local, remote or a vast.ai instance) as agent tools."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Jinsoo Kim" }]
+keywords = ["mcp", "comfyui", "vast.ai", "image-generation", "agents"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = ["mcp>=1.2,<3"]  # 1.x FastMCP and 2.x MCPServer both work (server.py)
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+comfy-workflow-mcp = "comfy_workflow_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/comfy_workflow_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
