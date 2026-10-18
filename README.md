@@ -19,6 +19,9 @@ Works with a local or remote ComfyUI, and with a [vast.ai](https://vast.ai) inst
 | `get_job(prompt_id, wait_seconds)` | `queued` / `running` / `done` / `error`; when done, downloads the files and returns their local paths |
 | `upload_image(path)` | Put a local image in the server's input folder |
 | `list_models(folder)` | Model folders, or the files in one (`checkpoints`, `loras`, `diffusion_models` ...) |
+| `judge_image(path, rubric, description)` | Score an image against a rubric and a description of what it must show (harness) |
+| `run_judged(name, prompt_field, prompt, description, rubric, set, images)` | Run a workflow under the harness: generate, judge, fix, judge again, keep the best. Returns a job id |
+| `get_judged(job_id)` | Progress and result of a `run_judged` job: best image, pass/fail, each attempt's score and problems |
 
 Inputs are addressed as `<node id | title | class>.<input>`:
 
@@ -33,6 +36,22 @@ Inputs are addressed as `<node id | title | class>.<input>`:
 ```
 
 A title wins over a class name, so give the nodes you want agents to touch a clear title in the editor (`Positive`, `Reference`). If a name matches more than one node, the error lists the ids to use instead. `images` takes a local file (uploaded for you) or a file name already on the server. `enable` / `bypass` switch nodes on or off for that run only. Seeds saved as "randomize" get a new value each run unless you set them.
+
+## Harness: judge and retry
+
+A generated image is often almost right: someone faces the camera instead of the person they talk to, there are three mugs instead of two, the left and right of a scene swap. The harness runs any saved workflow as a loop, so these get caught and fixed without anyone looking:
+
+```
+generate -> judge (rubric) -> fix -> judge -> ... -> keep the best attempt
+```
+
+The rules are data, not prompt text, so every agent that uses the workflow gets the same checks. A rubric has:
+
+- **criteria**: scored 0 to 1 by an isolated vision judge against your description of the image (`{name, description, weight, hard}`, a pass threshold, a retry limit). A second judge pass drops problems that are guesses or say the same thing differently.
+- **checks**: one focused question each. A long checklist misses things a single question catches.
+- **fixes**: `regenerate` (new seed, the problems appended to the prompt), `mirror` (flip left-right for a swapped scene, no re-run), or `edit` (run your edit workflow with the problems as the instruction).
+
+See [`examples/rubrics/story_panel.json`](examples/rubrics/story_panel.json) for comics and storyboards. Set `JUDGE_URL` (an OpenAI-compatible `/v1` endpoint), `JUDGE_MODEL` (a vision model) and, if needed, `JUDGE_API_KEY`, and install the extra: `pip install "comfy-workflow-mcp[harness]"`.
 
 ## Install
 

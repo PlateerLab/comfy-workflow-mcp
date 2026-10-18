@@ -95,6 +95,27 @@ def describe_workflow(name: str) -> str:
         return _err(e)
 
 
+def _queue(c: ComfyClient, name: str, sets: dict | None, images: dict | None, enable=None, bypass=None) -> str:
+    """Load the saved workflow, apply inputs and images, queue it. Returns the prompt_id."""
+    ui = c.get_workflow(name)
+    prompt, meta = to_api(ui, c.node_spec, enable or (), bypass or ())
+    done = apply_sets(prompt, meta, sets or {})
+    for ref, src in (images or {}).items():
+        nid = one_node(meta, ref)
+        if "image" not in prompt[nid]["inputs"]:
+            raise ConvertError(f"node {nid} ({meta[nid]['title']}) does not take an image")
+        p = Path(str(src)).expanduser()
+        if p.is_file():
+            digest = hashlib.sha1(p.read_bytes()).hexdigest()[:12]
+            server_name = c.upload_image(p, f"{p.stem}_{digest}{p.suffix}")
+        else:
+            server_name = str(src)
+        prompt[nid]["inputs"]["image"] = server_name
+        done.add((nid, "image"))
+    reroll_seeds(prompt, meta, done)
+    return c.queue_prompt(prompt, ui_workflow=ui if "nodes" in ui else None)
+
+
 @mcp.tool()
 def run_workflow(name: str, set: dict | None = None, images: dict | None = None, enable: list[str] | None = None,
                  bypass: list[str] | None = None, wait_seconds: float = 0, download_dir: str | None = None) -> str:
@@ -105,28 +126,81 @@ def run_workflow(name: str, set: dict | None = None, images: dict | None = None,
     wait_seconds: wait up to this long (capped by COMFY_MAX_WAIT) and download results; otherwise poll get_job."""
     try:
         c = client()
-        ui = c.get_workflow(name)
-        prompt, meta = to_api(ui, c.node_spec, enable or (), bypass or ())
-        done = apply_sets(prompt, meta, set or {})
-        for ref, src in (images or {}).items():
-            nid = one_node(meta, ref)
-            if "image" not in prompt[nid]["inputs"]:
-                raise ConvertError(f"node {nid} ({meta[nid]['title']}) does not take an image")
-            p = Path(str(src)).expanduser()
-            if p.is_file():
-                digest = hashlib.sha1(p.read_bytes()).hexdigest()[:12]
-                server_name = c.upload_image(p, f"{p.stem}_{digest}{p.suffix}")
-            else:
-                server_name = str(src)
-            prompt[nid]["inputs"]["image"] = server_name
-            done.add((nid, "image"))
-        reroll_seeds(prompt, meta, done)
-        pid = c.queue_prompt(prompt, ui_workflow=ui if "nodes" in ui else None)
+        pid = _queue(c, name, set, images, enable, bypass)
         wait = min(float(wait_seconds or 0), _max_wait())
         job = c.wait(pid, wait) if wait > 0 else {"status": "queued"}
         return json.dumps(_finish(c, pid, job, download_dir), ensure_ascii=False)
     except Exception as e:  # noqa: BLE001
         return _err(e)
+
+
+_judged: dict = {}  # job id -> {"status", "log", "result"} for run_judged (runs in a background thread)
+
+
+def _first_image(c: ComfyClient, pid: str, out_dir: Path, timeout: float = 1800) -> Path:
+    job = c.wait(pid, timeout)
+    if job.get("status") != "done":
+        raise RuntimeError(f"run {pid} ended as {job.get('status')}: {job.get('error', '')}")
+    files = [f for f in job.get("files", []) if f.get("type", "output") == "output"]
+    if not files:
+        raise RuntimeError(f"run {pid} produced no output file")
+    return c.download(files[0], out_dir).resolve()
+
+
+@mcp.tool()
+def judge_image(path: str, rubric: str, description: str) -> str:
+    """Judge one image with a rubric (path to a rubric JSON file, or the JSON itself) against a description of what it must show.
+    Returns score, pass/fail, the problems found (criteria + focused checks) and the suggested fix. Needs JUDGE_URL and JUDGE_MODEL."""
+    try:
+        from .harness import Judge, Rubric, evaluate
+        return json.dumps(evaluate(Judge(), path, description, Rubric.load(rubric)), ensure_ascii=False)
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+@mcp.tool()
+def run_judged(name: str, prompt_field: str, prompt: str, description: str, rubric: str, set: dict | None = None,
+               images: dict | None = None, download_dir: str | None = None) -> str:
+    """Run a saved workflow under the harness: generate -> judge with the rubric -> fix -> judge ..., keeping the best result.
+    prompt_field: the input that holds the prompt, e.g. "Positive.text"; on a retry the judge's problems are appended to it.
+    description: what the image must show (the judge checks against it). rubric: rubric JSON file path or JSON (see harness.py).
+    Starts in the background and returns a job id at once; poll get_judged(job_id). Needs JUDGE_URL and JUDGE_MODEL."""
+    import threading
+    import uuid
+    from .harness import Judge, Rubric, run_judged as loop
+    try:
+        rb, jd, c = Rubric.load(rubric), Judge(), client()
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+    jid = uuid.uuid4().hex[:10]
+    out = _download_dir(download_dir) / f"judged_{jid}"
+    state = _judged[jid] = {"status": "running", "log": [], "result": None}
+
+    def generate(note: str) -> Path:
+        text = prompt + (f"\n\nTHE LAST ATTEMPT HAD THESE MISTAKES, AVOID THEM: {note}" if note else "")
+        return _first_image(c, _queue(c, name, {**(set or {}), prompt_field: text}, images), out)
+
+    def edit(img: Path, instruction: str) -> Path:
+        fx = rb.fixes.get("edit") or {}
+        sets = {fx["prompt"]: f"Fix only this, keep everything else the same: {instruction}"}
+        return _first_image(c, _queue(c, fx["workflow"], sets, {fx["image"]: str(img)}), out)
+
+    def work():
+        try:
+            state["result"] = loop(generate, edit if rb.fixes.get("edit") else None, jd, rb, description, state["log"].append)
+            state["status"] = "done"
+        except Exception as e:  # noqa: BLE001
+            state["status"], state["error"] = "error", f"{type(e).__name__}: {e}"
+    threading.Thread(target=work, daemon=True).start()
+    return json.dumps({"job_id": jid, "status": "running", "poll": "get_judged"}, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_judged(job_id: str) -> str:
+    """Status of a run_judged job: running | done | error, the attempt log, and when done the best image, whether it passed,
+    and every attempt's score and problems."""
+    st = _judged.get(job_id)
+    return json.dumps(st if st else {"error": f"unknown job {job_id}"}, ensure_ascii=False, default=str)
 
 
 @mcp.tool()

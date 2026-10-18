@@ -1,0 +1,22 @@
+{
+ "_about": "Rubric for story panels (comics, webtoons, storyboards): staging mistakes readers notice. Pass the description of the panel to the judge. Built from real review feedback: people facing the viewer instead of each other, wrong prop counts, period props, a phone floating at someone's ear.",
+ "threshold": 0.8,
+ "max_retries": 2,
+ "verify": true,
+ "criteria": [
+  {"name": "matches_description", "weight": 1.0, "hard": true,
+   "description": "The people, their number, their positions (left/right), posture (sitting/standing) and the action are as described."},
+  {"name": "props", "weight": 1.0, "hard": true,
+   "description": "Key objects have the described kind and count (for example exactly two beer mugs, not three; a flip phone, not a smartphone)."},
+  {"name": "real_world_logic", "weight": 1.0, "hard": true,
+   "description": "Nothing works the wrong way: passengers face the direction of travel, the driver sits behind the wheel on the correct side for the country, a phone at the ear is held by a hand, objects rest on something."},
+  {"name": "speaking_face", "weight": 0.5, "hard": false,
+   "description": "A person who speaks or reacts in this moment shows their face (profile or three-quarter), not only the back of the head, unless a back view is described."}
+ ],
+ "checks": [
+  {"name": "faces_viewer", "fix": "regenerate", "key": "at_viewer", "fail_when": "nonempty",
+   "question": "Look only at where each person is looking. Is anyone's face turned to the front with the eyes looking straight out of the picture at the viewer, as if posing for the camera? Looking at another person, at an object, down or away does not count. Answer JSON only: {\"at_viewer\": [\"short description of each such person\"]}"},
+  {"name": "squared_to_viewer", "fix": "regenerate", "key": "facing_viewer", "fail_when": "nonempty",
+   "question": "If two or more people are dealing with each other, look at each person's face and shoulders: do they point toward the other person, or straight at the viewer like a group photo (even if the eyes glance sideways)? Answer JSON only: {\"facing_viewer\": [\"short description of each person squared to the viewer instead of the others\"]}"}
+ ]
+}
