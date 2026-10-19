@@ -118,7 +118,7 @@ MCP host (any PC) ──https + auth──▶ tunnel / reverse proxy ──▶ 1
 }
 ```
 
-* Long calls stay alive through proxies: responses stream as SSE with keep-alive pings every 15 s. Sessions idle for 30 minutes with no open request are closed; hosts reconnect.
+* The server is stateless (no per-client sessions), so restarting it or a long idle gap does not disconnect hosts. Long calls stay alive through proxies: responses stream as SSE with keep-alive pings every 15 s.
 
 ## How it works
 

@@ -62,9 +62,11 @@ def run_http(server, host: str = "127.0.0.1", port: int = 8765, public_url: str 
     hosts, origins = allowed(public_url, extra_hosts)
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
     http = getattr(server, "run_streamable_http_async", None)
+    # Stateless: the server keeps no per-client session, so a restart, a long idle gap or a proxy in between does not break connected hosts.
     if http is not None and "host" in inspect.signature(http).parameters:  # mcp 2.x: options go to run()
-        server.run(transport="streamable-http", host=host, port=port, transport_security=security)
+        server.run(transport="streamable-http", host=host, port=port, transport_security=security, stateless_http=True)
     else:  # mcp 1.x: options live on server.settings
         server.settings.host, server.settings.port = host, port
         server.settings.transport_security = security
+        server.settings.stateless_http = True
         server.run(transport="streamable-http")
