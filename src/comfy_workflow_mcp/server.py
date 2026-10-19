@@ -4,8 +4,10 @@
 
 Edit a workflow in the ComfyUI editor and save it: the next run uses the new version (it is loaded on every run).
 Settings come from the environment (see client.py): COMFY_URL or VAST_API_KEY, plus
-COMFY_DOWNLOAD_DIR (default ./comfy_outputs) and COMFY_MAX_WAIT (seconds one call may block, default 25,
-because some MCP hosts drop calls after ~30 s; long jobs return a prompt_id to poll with get_job).
+COMFY_DOWNLOAD_DIR (default ./comfy_outputs), COMFY_MAX_WAIT (seconds one call may block: default 25 over stdio, because some MCP
+hosts drop calls after ~30 s, and 85 in HTTP mode, under the ~100 s response limit of common tunnels; long jobs return a prompt_id to
+poll with get_job) and COMFY_RETURN_PREVIEWS (finished image results also come back as up to this many preview images, default 4,
+0 turns it off: a remote agent often cannot open the saved path or a protected URL, so it could not see what it made).
 
     comfy-workflow-mcp                                  stdio (the MCP host starts it)
     comfy-workflow-mcp --http [--port 8765] [--public-url https://comfy.example.com]   one server, many hosts (remote.py)
@@ -58,6 +60,38 @@ def _err(e: Exception) -> str:
 def _public_url() -> str:
     """Set in HTTP mode (--public-url or COMFY_MCP_PUBLIC_URL): results then also get a URL a remote host can open."""
     return os.environ.get("COMFY_MCP_PUBLIC_URL", "").rstrip("/")
+
+
+PREVIEW_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def _result(out: dict):
+    """A run result: the JSON text, plus preview images of the saved image files when the run is done (COMFY_RETURN_PREVIEWS)."""
+    text = json.dumps(out, ensure_ascii=False)
+    n = int(os.environ.get("COMFY_RETURN_PREVIEWS", "4") or 0)
+    files = [Path(f["saved_to"]) for f in out.get("files", []) if f.get("saved_to")]
+    files = [f for f in files if f.suffix.lower() in PREVIEW_TYPES and f.is_file()][:max(n, 0)]
+    if not files:
+        return text
+    import base64
+    import io
+
+    from mcp.types import ImageContent, TextContent
+    blocks = [TextContent(type="text", text=text)]
+    for f in files:
+        try:
+            from PIL import Image  # optional: shrink to a preview; without Pillow small files go as they are
+            img = Image.open(f).convert("RGB")
+            img.thumbnail((768, 768))
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=82)
+            data, mime = buf.getvalue(), "image/jpeg"
+        except ImportError:
+            if f.stat().st_size > 1_500_000:
+                continue
+            data, mime = f.read_bytes(), PREVIEW_TYPES[f.suffix.lower()]
+        blocks.append(ImageContent(type="image", data=base64.b64encode(data).decode(), mimeType=mime))
+    return blocks
 
 
 def _finish(c: ComfyClient, pid: str, job: dict, download_dir: str | None) -> dict:
@@ -140,7 +174,7 @@ def _queue(c: ComfyClient, name: str, sets: dict | None, images: dict | None, en
 
 @mcp.tool()
 def run_workflow(name: str, set: dict | None = None, images: dict | None = None, enable: list[str] | None = None,
-                 bypass: list[str] | None = None, wait_seconds: float = 0, download_dir: str | None = None) -> str:
+                 bypass: list[str] | None = None, wait_seconds: float = 0, download_dir: str | None = None):
     """Run a saved workflow with your inputs.
     set: {"<node id|title|class>.<input>": value}, e.g. {"Positive.text": "a cat", "KSampler.seed": 7, "EmptyLatentImage.width": 1024}.
     images: {"<LoadImage node id|title>": local file path (uploaded) or a file name already on the server}.
@@ -151,7 +185,7 @@ def run_workflow(name: str, set: dict | None = None, images: dict | None = None,
         pid = _queue(c, name, set, images, enable, bypass)
         wait = min(float(wait_seconds or 0), _max_wait())
         job = c.wait(pid, wait) if wait > 0 else {"status": "queued"}
-        return json.dumps(_finish(c, pid, job, download_dir), ensure_ascii=False)
+        return _result(_finish(c, pid, job, download_dir))
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -226,14 +260,15 @@ def get_judged(job_id: str) -> str:
 
 
 @mcp.tool()
-def get_job(prompt_id: str, wait_seconds: float = 0, download_dir: str | None = None) -> str:
-    """Status of a run (queued | running | done | error). When done, output files are downloaded and 'saved_to' has the local path.
-    wait_seconds waits up to that long (capped by COMFY_MAX_WAIT)."""
+def get_job(prompt_id: str, wait_seconds: float = 0, download_dir: str | None = None):
+    """Status of a run (queued | running | done | error). When done, output files are downloaded ('saved_to' has the local path,
+    'url' the public one in HTTP mode) and image results also come back as preview images. wait_seconds waits up to that long
+    (capped by COMFY_MAX_WAIT)."""
     try:
         c = client()
         wait = min(float(wait_seconds or 0), _max_wait())
         job = c.wait(prompt_id, wait) if wait > 0 else c.job(prompt_id)
-        return json.dumps(_finish(c, prompt_id, job, download_dir), ensure_ascii=False)
+        return _result(_finish(c, prompt_id, job, download_dir))
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -272,6 +307,7 @@ def main() -> None:
         return
     if a.public_url:
         os.environ["COMFY_MCP_PUBLIC_URL"] = a.public_url
+    os.environ.setdefault("COMFY_MAX_WAIT", "85")  # one call may block longer over HTTP (tunnels allow ~100 s), so fewer get_job polls
     remote.run_http(mcp, a.host, a.port, a.public_url, a.allow_host)
 
 

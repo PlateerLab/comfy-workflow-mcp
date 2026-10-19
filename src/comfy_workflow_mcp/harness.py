@@ -79,6 +79,15 @@ class Judge:
             raise ValueError("set JUDGE_URL and JUDGE_MODEL (an OpenAI-compatible vision model) to use the harness")
 
     def ask(self, images: list, text: str, max_tokens: int = 600) -> dict:
+        """One question about the images, answered as JSON. A broken or cut-off answer is asked once more with a larger token budget;
+        if it still has no JSON object this raises ValueError. It never returns {} for a failed answer: an empty answer reads as
+        'no problems', so a judge that could not answer would pass every image."""
+        try:
+            return self._ask(images, text, max_tokens)
+        except ValueError:
+            return self._ask(images, text, max_tokens * 2)
+
+    def _ask(self, images: list, text: str, max_tokens: int) -> dict:
         content = []
         for p in images:
             content.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + _jpeg_b64(p)}})
@@ -89,8 +98,21 @@ class Judge:
                                      headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.key}"})
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             txt = json.loads(r.read().decode())["choices"][0]["message"]["content"]
-        m = re.search(r"\{.*\}", txt, re.S)
-        return json.loads(m.group()) if m else {}
+        return parse_json(txt)
+
+
+def parse_json(txt: str) -> dict:
+    """The first JSON object in a model answer. Reading from the first '{' to the last '}' broke when the model added prose or a
+    second object after the answer. Raises ValueError when there is none (a cut-off answer is not repaired: it may have lost problems)."""
+    dec = json.JSONDecoder()
+    for m in re.finditer(r"\{", txt):
+        try:
+            obj = dec.raw_decode(txt[m.start():])[0]
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    raise ValueError("no JSON object in the judge answer: " + txt[:80])
 
 
 def _jpeg_b64(path) -> str:

@@ -95,3 +95,26 @@ def test_rubric_loads_json_string_and_file(tmp_path):
     f.write_text(json.dumps(data), encoding="utf-8")
     assert Rubric.load(json.dumps(data)).threshold == 0.9
     assert Rubric.load(str(f)).criteria[0]["name"] == "x"
+
+
+def test_parse_json_takes_first_object_despite_prose():
+    from comfy_workflow_mcp.harness import parse_json
+    assert parse_json('Sure. {"problems": []} Hope this helps {"x": 1}') == {"problems": []}
+    assert parse_json('{not json} then {"keep": [0]}') == {"keep": [0]}
+    with pytest.raises(ValueError):
+        parse_json('{"problems": ["cut off')  # a cut-off answer is not repaired: it may have lost problems
+
+
+def test_judge_that_cannot_answer_raises_instead_of_passing(monkeypatch, tmp_path):
+    from comfy_workflow_mcp.harness import Judge
+    j = Judge(url="http://judge.invalid/v1", model="m")
+    budgets = []
+
+    def broken(images, text, max_tokens):
+        budgets.append(max_tokens)
+        raise ValueError("no JSON object in the judge answer")
+
+    monkeypatch.setattr(j, "_ask", broken)
+    with pytest.raises(ValueError):
+        evaluate(j, img(tmp_path, "a.png"), "two mugs", RUBRIC)
+    assert budgets == [1200, 2400]  # asked once more with a larger budget before giving up

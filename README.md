@@ -16,7 +16,7 @@ Works with a local or remote ComfyUI, and with a [vast.ai](https://vast.ai) inst
 | `list_workflows` | Workflows saved in the editor |
 | `describe_workflow(name)` | Each node's id, title, class and the values you can change; which nodes take images, which produce outputs, which seeds re-roll |
 | `run_workflow(name, set, images, enable, bypass, wait_seconds)` | Run with your values. Returns a `prompt_id` (and the files if it finished within `wait_seconds`) |
-| `get_job(prompt_id, wait_seconds)` | `queued` / `running` / `done` / `error`; when done, downloads the files and returns their local paths |
+| `get_job(prompt_id, wait_seconds)` | `queued` / `running` / `done` / `error`; when done, downloads the files and returns their local paths, plus preview images of image results |
 | `upload_image(path)` | Put a local image in the server's input folder |
 | `list_models(folder)` | Model folders, or the files in one (`checkpoints`, `loras`, `diffusion_models` ...) |
 | `judge_image(path, rubric, description)` | Score an image against a rubric and a description of what it must show (harness) |
@@ -73,7 +73,8 @@ Python 3.10+. The only dependency is the `mcp` SDK; the ComfyUI client uses the 
 | `VAST_INSTANCE_ID` | Which instance (default: the first running one that exposes the port) |
 | `VAST_COMFY_PORT` | ComfyUI's container port on the instance (default `8188`) |
 | `COMFY_DOWNLOAD_DIR` | Where results are saved (default `./comfy_outputs`) |
-| `COMFY_MAX_WAIT` | Longest a single call blocks, in seconds (default `25`; some MCP hosts drop calls after ~30 s) |
+| `COMFY_MAX_WAIT` | Longest a single call blocks, in seconds (default `25` over stdio, since some MCP hosts drop calls after ~30 s; `85` in HTTP mode, under the ~100 s limit of common tunnels) |
+| `COMFY_RETURN_PREVIEWS` | Finished image results also come back as up to this many preview images (default `4`, `0` to turn off), so a remote agent can see what it made without opening paths or protected URLs |
 
 On vast.ai the ComfyUI template puts basic auth in front of the port: user `vastai`, password = the instance's Jupyter token. The server reads both from the vast.ai API, so the address and token stay right when you recreate the instance.
 

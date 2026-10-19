@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "comfy-workflow-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP server that runs the workflows saved in a ComfyUI server (local, remote or a vast.ai instance) as agent tools."
 readme = "README.md"
 license = { file = "LICENSE" }
