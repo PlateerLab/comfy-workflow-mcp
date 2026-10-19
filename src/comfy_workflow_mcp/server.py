@@ -6,6 +6,9 @@ Edit a workflow in the ComfyUI editor and save it: the next run uses the new ver
 Settings come from the environment (see client.py): COMFY_URL or VAST_API_KEY, plus
 COMFY_DOWNLOAD_DIR (default ./comfy_outputs) and COMFY_MAX_WAIT (seconds one call may block, default 25,
 because some MCP hosts drop calls after ~30 s; long jobs return a prompt_id to poll with get_job).
+
+    comfy-workflow-mcp                                  stdio (the MCP host starts it)
+    comfy-workflow-mcp --http [--port 8765] [--public-url https://comfy.example.com]   one server, many hosts (remote.py)
 """
 from __future__ import annotations
 
@@ -19,6 +22,9 @@ try:  # mcp 2.x renamed FastMCP to MCPServer (same name / instructions / tool() 
 except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import FastMCP as _Server
 
+from starlette.responses import FileResponse, PlainTextResponse  # starlette comes with the mcp SDK
+
+from . import remote
 from .client import ComfyClient, from_env
 from .convert import ConvertError, apply_sets, describe, one_node, reroll_seeds, to_api
 
@@ -49,14 +55,30 @@ def _err(e: Exception) -> str:
     return json.dumps({"error": f"{type(e).__name__}: {e}"}, ensure_ascii=False)
 
 
+def _public_url() -> str:
+    """Set in HTTP mode (--public-url or COMFY_MCP_PUBLIC_URL): results then also get a URL a remote host can open."""
+    return os.environ.get("COMFY_MCP_PUBLIC_URL", "").rstrip("/")
+
+
 def _finish(c: ComfyClient, pid: str, job: dict, download_dir: str | None) -> dict:
     out = {"prompt_id": pid, **job}
     if job.get("status") == "done" and job.get("files"):
         d = _download_dir(download_dir)
         for f in out["files"]:
             if f.get("type", "output") == "output":
-                f["saved_to"] = str(c.download(f, d).resolve())
+                saved = c.download(f, d).resolve()
+                f["saved_to"] = str(saved)
+                url = remote.file_url(_public_url(), _download_dir(None), saved)
+                if url:
+                    f["url"] = url
     return out
+
+
+@mcp.custom_route("/files/{path:path}", methods=["GET"])
+async def files(request):
+    """Saved results for remote hosts (HTTP mode only; stdio never serves it). Only media under COMFY_DOWNLOAD_DIR."""
+    f = remote.servable(_download_dir(None), request.path_params.get("path", ""))
+    return FileResponse(f) if f else PlainTextResponse("not found", status_code=404)
 
 
 @mcp.tool()
@@ -235,7 +257,22 @@ def list_models(folder: str | None = None) -> str:
 
 
 def main() -> None:
-    mcp.run()
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="comfy-workflow-mcp", description="ComfyUI saved workflows as MCP tools.")
+    ap.add_argument("--http", action="store_true", help="serve Streamable HTTP on /mcp instead of stdio, for hosts on other machines")
+    ap.add_argument("--host", default="127.0.0.1", help="bind address in HTTP mode (default 127.0.0.1; put an authenticating proxy in front)")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--public-url", default=os.environ.get("COMFY_MCP_PUBLIC_URL", ""),
+                    help="public base URL behind the tunnel/proxy, e.g. https://comfy.example.com (allows that Host, adds result URLs)")
+    ap.add_argument("--allow-host", action="append", default=[], help="extra Host header to accept (repeatable)")
+    a = ap.parse_args()
+    if not a.http:
+        mcp.run()
+        return
+    if a.public_url:
+        os.environ["COMFY_MCP_PUBLIC_URL"] = a.public_url
+    remote.run_http(mcp, a.host, a.port, a.public_url, a.allow_host)
 
 
 if __name__ == "__main__":

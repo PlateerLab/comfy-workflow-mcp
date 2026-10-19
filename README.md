@@ -90,6 +90,36 @@ On vast.ai the ComfyUI template puts basic auth in front of the port: user `vast
 }
 ```
 
+### Use it from other machines (HTTP)
+
+With stdio every machine runs its own copy, so each one needs Python, the code and the ComfyUI settings. In HTTP mode one machine runs the server and any MCP host connects to its URL:
+
+```bash
+comfy-workflow-mcp --http --port 8765 --public-url https://comfy.example.com
+```
+
+```
+MCP host (any PC) ──https + auth──▶ tunnel / reverse proxy ──▶ 127.0.0.1:8765/mcp ──▶ ComfyUI
+```
+
+* The server binds to `127.0.0.1` and has **no authentication of its own**. Put a tunnel or reverse proxy that authenticates in front of it, for example a Cloudflare Tunnel with a Cloudflare Access application and a service token (the host then sends `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers).
+* `--public-url` adds the public host to the SDK's DNS-rebinding allow list (otherwise requests through the proxy get `421`) and adds a `url` next to `saved_to` for each result, served from `/files/` (media files under `COMFY_DOWNLOAD_DIR` only). Extra hosts: `--allow-host`.
+* Client config (Claude Code, Claude Desktop with a remote-capable host, XGEN Dex):
+
+```json
+{
+  "mcpServers": {
+    "comfy": {
+      "type": "http",
+      "url": "https://comfy.example.com/mcp",
+      "headers": {"CF-Access-Client-Id": "...", "CF-Access-Client-Secret": "..."}
+    }
+  }
+}
+```
+
+* Long calls stay alive through proxies: responses stream as SSE with keep-alive pings every 15 s. Sessions idle for 30 minutes with no open request are closed; hosts reconnect.
+
 ## How it works
 
 ComfyUI saves workflows in the editor format (nodes, positional widget values, numbered links). The `/prompt` endpoint needs the API format (named inputs). The server converts one into the other on every run, using the server's own `/object_info` to name the widgets, so any installed custom node works without a mapping table.
@@ -102,6 +132,7 @@ The editor workflow is sent along with each run, so every output PNG opens as th
 
 * The vast.ai API key can control your whole account. This server only reads the instance list (`GET /instances`); it never creates, stops or deletes anything. The key and the instance token are not logged or returned by any tool.
 * Agents can run any saved workflow and read the server's model and input lists. Point the server at a ComfyUI you are happy to share with the agent.
+* HTTP mode has no authentication of its own: anyone who reaches the URL can run workflows on your GPU. Keep the default `127.0.0.1` bind and expose it only through an authenticating proxy; give each person their own token so one can be revoked.
 
 ## Development
 
@@ -110,7 +141,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The tests cover the conversion offline with a hand-made `/object_info`.
+The tests cover the conversion offline with a hand-made `/object_info`, the harness, and the HTTP-mode helpers.
 
 ## License
 
